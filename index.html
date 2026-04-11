@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>RECEIVER HUB | คอมพิวเตอร์ร้านเหนือ (รับของ)</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Sarabun', sans-serif; background-color: #F3F4F6; scroll-behavior: smooth; }
+        .print-only { display: none; }
+        @media print {
+            @page { size: A4; margin: 8mm 10mm; } 
+            body, html { background: #fff !important; padding: 0 !important; color: #000 !important; display: block !important; height: auto !important; min-height: auto !important; }
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            .pdf-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 10px; }
+            .pdf-title-box { text-align: left; }
+            .pdf-title { font-size: 18px; font-weight: bold; margin: 0; }
+            .pdf-meta { font-size: 11px; color: #333; margin-top: 2px; line-height: 1.4; }
+            .pdf-header svg { max-height: 35px; margin: 0; }
+            .pdf-columns { column-count: 2; column-gap: 20px; font-size: 12px; display: block; width: 100%; }
+            .pick-table { width: 100%; border-collapse: collapse; table-layout: fixed; margin-bottom: 15px; page-break-inside: auto; break-inside: auto; }
+            .pick-table tr { page-break-inside: avoid; break-inside: avoid; }
+            .pick-table th, .pick-table td { border: 1px solid #000; padding: 4px 6px; vertical-align: middle; word-wrap: break-word; font-size: 12px; line-height: 1.2; }
+            .cat-header th { background-color: #D1D5DB !important; -webkit-print-color-adjust: exact; font-weight: bold; text-align: left; font-size: 13px; }
+            .sub-header th { background-color: #F3F4F6 !important; -webkit-print-color-adjust: exact; text-align: center; font-weight: bold; font-size: 11px; }
+            .col-name { width: 55%; text-align: center; } .col-qty { width: 22%; text-align: center; }  .col-unit { width: 23%; text-align: center; } 
+            .td-name { text-align: left; } .td-qty { font-size: 15px; font-weight: bold; text-align: center; } .td-unit { font-size: 11px; text-align: center; color: #333; } 
+            .pdf-sign { margin-top: 15px; padding-top: 10px; border-top: 1px dashed #000; display: flex; justify-content: flex-end; gap: 50px; text-align: center; break-inside: avoid; page-break-inside: avoid; clear: both;}
+            .sign-box { width: 150px; font-size: 12px; }
+            .pdf-report { font-family: 'Sarabun'; }
+            .pdf-report table { width: 100%; border-collapse: collapse; margin-top: 10px; border: 1px solid #333; }
+            .pdf-report th, .pdf-report td { border: 1px solid #333; padding: 4px; font-size: 12px; vertical-align: middle; }
+            .pdf-report th { background: #E5E7EB !important; -webkit-print-color-adjust: exact; }
+            .shortage-row { background: #FEE2E2 !important; -webkit-print-color-adjust: exact; }
+            .item-barcode-svg { max-width: 100%; height: auto; } 
+        }
+    </style>
+</head>
+<body class="p-6 relative">
+
+    <button onclick="window.scrollTo({top: 0, behavior: 'smooth'})" class="fixed bottom-8 right-8 bg-blue-600 text-white w-14 h-14 rounded-full shadow-2xl hover:bg-blue-700 transition-all z-50 flex items-center justify-center text-xl border-2 border-white no-print">
+        <i class="fas fa-arrow-up"></i>
+    </button>
+
+    <input type="file" id="file-loader" accept=".json" class="hidden" onchange="handleFileLoad(event)">
+
+    <div class="max-w-6xl mx-auto bg-white rounded-xl shadow-lg p-8 relative no-print">
+        <div class="flex justify-between items-start border-b pb-4 mb-6">
+            <div>
+                <h1 class="text-3xl font-bold text-blue-700"><i class="fas fa-warehouse"></i> RECEIVER HUB (ร้านเหนือ)</h1>
+                <div class="mt-3 flex gap-4 text-sm font-semibold">
+                    <span id="db-status" class="text-yellow-600">🟡 กำลังโหลดชีท...</span>
+                    <span id="mqtt-status" class="text-red-600">🔴 รอเชื่อมต่อระบบ...</span>
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="showHistory()" class="bg-purple-50 text-purple-700 px-4 py-2 rounded-lg font-bold hover:bg-purple-100 shadow-sm border border-purple-200 transition"><i class="fas fa-history mr-1"></i> ประวัติการทำงาน</button>
+                <button onclick="document.getElementById('file-loader').click()" class="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg font-bold hover:bg-gray-200 shadow-sm border border-gray-300 transition"><i class="fas fa-folder-open mr-1"></i> โหลดไฟล์</button>
+                <button onclick="saveToFile()" class="bg-blue-50 text-blue-700 px-4 py-2 rounded-lg font-bold hover:bg-blue-100 shadow-sm border border-blue-200 transition"><i class="fas fa-save mr-1"></i> เซฟไฟล์</button>
+                <button onclick="saveResultPDF()" class="bg-gray-800 text-white px-4 py-2 rounded-lg font-bold hover:bg-gray-900 shadow-sm transition"><i class="fas fa-file-pdf mr-1"></i> สรุปรับเข้า</button>
+            </div>
+        </div>
+
+        <div class="flex flex-col md:flex-row gap-4 mb-6">
+            <div class="flex-1 bg-blue-50 p-5 rounded-lg border border-blue-100 shadow-inner flex flex-col justify-center relative overflow-hidden">
+                <div class="absolute right-0 top-0 bottom-0 w-2 bg-blue-500"></div>
+                <label class="text-sm font-bold text-blue-800 mb-2"><i class="fas fa-search"></i> ค้นหาชื่อสินค้า หรือ ยิงบาร์โค้ดหัวบิล</label>
+                <input type="text" id="bill-scanner" placeholder="พิมพ์ชื่อสินค้า / บาร์โค้ด / รหัสบิล..." class="w-full px-4 py-3 border-2 border-blue-300 rounded-lg text-xl focus:ring-4 focus:ring-blue-200 outline-none bg-white font-bold transition-shadow" onkeypress="handleScan(event)">
+            </div>
+            
+            <div class="flex flex-col gap-3 md:w-1/3">
+                <button onclick="showInbox('NEW')" class="flex-1 bg-yellow-50 border border-yellow-300 text-yellow-800 rounded-lg font-bold hover:bg-yellow-100 transition shadow-sm relative flex items-center px-4">
+                    <i class="fas fa-clipboard-list mr-3 text-2xl opacity-70"></i>
+                    <div class="text-left leading-tight"><div class="text-sm">บิลเข้าใหม่ (จากวงเวียน)</div><div class="text-[11px] opacity-70">คลิกเพื่อดูหมวดหมู่ตามผู้เบิก</div></div>
+                    <span id="badge-new" class="absolute top-1/2 -translate-y-1/2 right-4 bg-red-500 text-white text-sm px-3 py-1 rounded-full shadow hidden">0</span>
+                </button>
+                <button onclick="showInbox('QC_PASSED')" class="flex-1 bg-green-50 border border-green-300 text-green-800 rounded-lg font-bold hover:bg-green-100 transition shadow-sm relative flex items-center px-4">
+                    <i class="fas fa-check-double mr-3 text-2xl opacity-70"></i>
+                    <div class="text-left leading-tight"><div class="text-sm">บิลผ่าน QC แล้ว</div><div class="text-[11px] opacity-70">พร้อมรันบอทเข้า POS</div></div>
+                    <span id="badge-qc" class="absolute top-1/2 -translate-y-1/2 right-4 bg-red-500 text-white text-sm px-3 py-1 rounded-full shadow hidden">0</span>
+                </button>
+            </div>
+        </div>
+
+        <div id="mode-alert" class="mb-4 p-4 rounded-lg font-bold hidden border transition-all"></div>
+
+        <div class="flex justify-between items-center bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6">
+            <div class="flex flex-col">
+                <div><span class="text-gray-500 text-sm font-bold">รหัสบิลที่เปิดอยู่:</span><span id="display-bill" class="text-2xl font-bold text-blue-700 ml-2 font-mono bg-blue-100 px-3 py-1 rounded-md">ยังไม่ได้เปิดบิล</span></div>
+                <div id="picker-display" class="text-sm font-bold text-gray-600 mt-2 hidden"><i class="fas fa-user text-blue-500 mr-1"></i> ผู้เบิก/จัดของ: <span class="text-gray-800"></span></div>
+            </div>
+            <div id="action-buttons-zone" class="flex gap-2"></div>
+        </div>
+
+        <div class="mb-8">
+            <h2 class="text-xl font-bold text-gray-700 mb-4">📦 รายการสินค้า</h2>
+            <div id="table-container" class="overflow-x-auto rounded-lg border border-gray-200 shadow-sm transition-all duration-300 min-h-[300px] bg-white">
+                <table class="w-full text-left border-collapse">
+                    <thead class="bg-gray-800 text-white text-sm">
+                        <tr>
+                            <th class="p-3 border-b text-center w-12">#</th>
+                            <th class="p-3 border-b text-center w-20">เอาเข้า POS?</th>
+                            <th class="p-3 border-b w-64">
+                                <div class="mb-1">🎯 เลือกรหัสที่จะพิมพ์</div>
+                                <div class="flex gap-1">
+                                    <button onclick="setAllCodes('pos')" class="bg-blue-500 hover:bg-blue-600 text-white text-[10px] px-2 py-1 rounded shadow-sm">ใช้ POS ทั้งบิล</button>
+                                    <button onclick="setAllCodes('bar')" class="bg-purple-500 hover:bg-purple-600 text-white text-[10px] px-2 py-1 rounded shadow-sm">ใช้ BAR ทั้งบิล</button>
+                                </div>
+                            </th>
+                            <th class="p-3 border-b">ชื่อสินค้า</th>
+                            <th class="p-3 border-b w-48 text-center">จำนวน (จริง / เบิก)</th>
+                            <th class="p-3 border-b w-16 text-center">แก้</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body">
+                        <tr><td colspan="6" class="p-10 text-center text-gray-400 font-bold text-lg">ยิงบาร์โค้ดหัวบิล หรือค้นหาชื่อสินค้า...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="bot-settings-zone" class="hidden bg-indigo-50 p-6 rounded-xl border border-indigo-200 mb-6 shadow-sm">
+            <div class="flex items-center justify-between mb-4 border-b border-indigo-100 pb-2">
+                <h3 class="font-bold text-indigo-800 text-lg"><i class="fas fa-robot text-2xl mr-2 align-middle"></i> แผงควบคุมบอทอัตโนมัติ (Smart Bot)</h3>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="flex flex-col gap-4">
+                    <div><label class="text-sm font-bold text-indigo-700 block mb-1">1. ปุ่มลงบรรทัดใหม่</label><select id="bot-newline-action" class="w-full p-2.5 border border-indigo-300 rounded-lg outline-none font-semibold"><option value="{ENTER 3}">[Enter x3] (ผ่านช่องราคา -> ส่วนลด -> บรรทัดใหม่)</option><option value="{DOWN}{LEFT 10}">[ลูกศรลง + ซ้ายสุด]</option><option value="{ENTER}">[Enter 1 ครั้ง]</option></select></div>
+                    <div><label class="text-sm font-bold text-indigo-700 block mb-1">2. ความเร็วในการพิมพ์</label><select id="bot-speed" class="w-full p-2.5 border border-indigo-300 rounded-lg outline-none font-semibold"><option value="1.0">⚡ ปกติ (Standard)</option><option value="0.5">🚀 จรวด (Fast)</option><option value="1.5">🐢 ปลอดภัย (Slow)</option></select></div>
+                </div>
+                <div class="flex flex-col gap-4">
+                    <div><label class="text-sm font-bold text-indigo-700 block mb-1">3. จุดพักเบรก</label><div class="flex items-center gap-2"><span class="text-sm font-semibold text-gray-600">หยุดรอ ทุกๆ</span><input type="number" id="bot-checkpoint" value="0" min="0" class="w-20 p-2 border border-indigo-300 rounded-lg text-center font-bold"><span class="text-sm font-semibold text-gray-600">รายการ (0 = ไม่พัก)</span></div></div>
+                    <div><label class="text-sm font-bold text-indigo-700 block mb-1">4. เวลาให้เตรียมตัว</label><select id="bot-countdown" class="w-full p-2.5 border border-indigo-300 rounded-lg outline-none font-semibold"><option value="15">⏳ 15 วินาที</option><option value="5">⏳ 5 วินาที</option></select></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="print-container" class="print-only"></div>
+
+    <script>
+        const CLOUD_DB_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRvwTaBXGqCketFQkMuoRdcmff9y_NMSRt3gm0Ckv59hveKJ2e0xxc87GVGGhPeRddamADigVTspqTj/pub?gid=333739859&single=true&output=csv"; 
+        const MQTT_BROKER = 'wss://broker.emqx.io:8084/mqtt';
+        let masterDb = []; let availableUnits = ["ชิ้น", "แพ็ค", "โหล", "ลัง", "กล่อง"]; 
+        let inboxNew = JSON.parse(localStorage.getItem('r_inbox_new')) || {}; 
+        let inboxQC = JSON.parse(localStorage.getItem('r_inbox_qc')) || {}; 
+        let activeItems = JSON.parse(localStorage.getItem('r_active_items')) || [];
+        let activeBillId = localStorage.getItem('r_active_bill') || "";
+        let activeState = localStorage.getItem('r_active_state') || ""; 
+        let activePicker = localStorage.getItem('r_active_picker') || ""; 
+        let receiverHistory = JSON.parse(localStorage.getItem('r_history_log')) || [];
+        let client;
+
+        function getThaiDateTime() { const d = new Date(); const m = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]; return `${d.getDate()} ${m[d.getMonth()]} ${d.getFullYear()+543} เวลา ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')} น.`; }
+
+        Papa.parse(CLOUD_DB_URL, {
+            download: true, header: true, skipEmptyLines: true,
+            complete: function(results) { 
+                masterDb = results.data.map(row => ({
+                    Barcode: row['บาร์โค้ด'] || row['barcode'] || row.Barcode || row['รหัสแท่ง'] || "",
+                    Name: row['รายละเอียด'] || row['ชื่อสินค้า'] || row.Name || row['รายการ'] || row['สินค้า'] || "",
+                    Unit: row['หน่วยนับ'] || row.Unit || row['หน่วย'] || row['UOM'] || "ชิ้น",
+                    posCode: row['รหัสสินค้า'] || row.Code || row.SKU || row['รหัส'] || row['ItemCode'] || row['บาร์โค้ด'] || ""
+                }));
+                document.getElementById('db-status').innerText = `🟢 โหลดชีทสำเร็จ`; document.getElementById('db-status').classList.replace('text-yellow-600', 'text-green-600');
+                if(masterDb.length > 0) availableUnits = [...new Set(masterDb.map(i => i.Unit).filter(Boolean))];
+                
+                activeItems = activeItems.map(i => ({...i, selectedCode: i.selectedCode || i.posCode || i.barcode}));
+                updateUI(); connectMQTT();
+            }
+        });
+
+        function processItemsWithSmartMapping(items) {
+            let warnings = [];
+            let mapped = items.map(item => {
+                let dbMatches = masterDb.filter(db => db.Name.trim().toLowerCase() === item.name.trim().toLowerCase());
+                if (dbMatches.length > 0) {
+                    let exactMatch = dbMatches.find(db => db.Unit.trim() === item.unit.trim());
+                    if (exactMatch) {
+                        item.barcode = exactMatch.Barcode;
+                        item.posCode = exactMatch.posCode || exactMatch.Barcode;
+                        item.selectedCode = item.posCode;
+                    } else {
+                        if(!warnings.includes(item.name)) warnings.push(`- ${item.name} (สแกนมาเป็น '${item.unit}')`);
+                    }
+                }
+                return item;
+            });
+
+            if (warnings.length > 0) {
+                Swal.fire({
+                    icon: 'warning', title: 'ตรวจพบหน่วยนับไม่ตรงชีท!',
+                    html: `มีสินค้าสแกนเข้ามาด้วยหน่วยนับที่<b>ไม่มีในฐานข้อมูล</b>:<br><br><div class="text-left bg-yellow-50 p-2 text-sm text-yellow-800 rounded border border-yellow-200">${warnings.join('<br>')}</div><br>ระบบจะใช้รหัสบาร์โค้ดเดิมไปก่อน โปรดตรวจสอบความถูกต้อง!`,
+                    confirmButtonColor: '#F59E0B'
+                });
+            }
+            return mapped;
+        }
+
+        function connectMQTT() {
+            client = mqtt.connect(MQTT_BROKER);
+            client.on('connect', () => { 
+                document.getElementById('mqtt-status').innerText = "🟢 ระบบออนไลน์"; document.getElementById('mqtt-status').classList.replace('text-red-600', 'text-green-600');
+                client.subscribe("branch-nuea-receive"); 
+                client.subscribe("branch-nuea-checked-ready"); 
+                client.subscribe("branch-nuea-request-bill"); 
+            });
+
+            client.on('message', (topic, message) => {
+                const payload = JSON.parse(message.toString());
+                if (topic === "branch-nuea-request-bill") {
+                    const reqId = payload.billId; let itemsToSend = null;
+                    if(inboxNew[reqId]) itemsToSend = Array.isArray(inboxNew[reqId]) ? inboxNew[reqId] : inboxNew[reqId].items;
+                    else if(inboxQC[reqId]) itemsToSend = Array.isArray(inboxQC[reqId]) ? inboxQC[reqId] : inboxQC[reqId].items;
+                    else if(activeBillId === reqId) itemsToSend = activeItems;
+
+                    if (itemsToSend) {
+                        client.publish("branch-nuea-to-qc", JSON.stringify({ billId: reqId, items: itemsToSend }));
+                        if(inboxNew[reqId]) { 
+                            activePicker = Array.isArray(inboxNew[reqId]) ? "ไม่ระบุ" : (inboxNew[reqId].picker || "ไม่ระบุ"); 
+                            delete inboxNew[reqId]; saveData(); updateUI(); 
+                        }
+                    }
+                    return; 
+                }
+
+                if(!payload.billId || !payload.items) return;
+
+                if(topic === "branch-nuea-receive") {
+                    let mappedItems = processItemsWithSmartMapping(payload.items.map(i => ({...i, selectedCode: i.posCode || i.barcode})));
+                    inboxNew[payload.billId] = { items: mappedItems, picker: payload.picker || "ไม่ระบุ" };
+                    Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: `📥 บิลใหม่จากวงเวียน!`, showConfirmButton: false, timer: 3000 });
+                } else if (topic === "branch-nuea-checked-ready") {
+                    let mappedItems = processItemsWithSmartMapping(payload.items.map(i => ({ ...i, reqQty: i.qty||i.reqQty, actQty: i.actQty||0, includePos: (i.actQty||0) > 0, selectedCode: i.selectedCode || i.posCode || i.barcode })));
+                    
+                    if (activeBillId === payload.billId) {
+                        activeItems = mappedItems;
+                        activeState = 'QC_PASSED'; Swal.fire({ toast: true, position: 'top', icon: 'success', title: `บิลนี้ตรวจเสร็จแล้ว!`, showConfirmButton: false, timer: 4000 });
+                    } else {
+                        inboxQC[payload.billId] = { items: mappedItems, picker: "ทีม QC (ร้านเหนือ)" };
+                        Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `✅ บิลตรวจ QC เสร็จแล้ว!`, showConfirmButton: false, timer: 3000 });
+                    }
+                }
+                saveData(); updateUI();
+            });
+        }
+
+        function saveData() { localStorage.setItem('r_inbox_new', JSON.stringify(inboxNew)); localStorage.setItem('r_inbox_qc', JSON.stringify(inboxQC)); localStorage.setItem('r_active_items', JSON.stringify(activeItems)); localStorage.setItem('r_active_bill', activeBillId); localStorage.setItem('r_active_state', activeState); localStorage.setItem('r_active_picker', activePicker); }
+        
+        function handleScan(event) {
+            if (event.key === 'Enter') {
+                const query = event.target.value.trim(); event.target.value = ''; if(!query) return;
+                
+                if(query.startsWith("REQ-") || query.startsWith("BATCH-") || query.startsWith("RCV-")) {
+                    if(activeBillId && (query === activeBillId || activeBillId.includes(query))) {
+                        const tableBox = document.getElementById('table-container'); tableBox.classList.add('ring-4', 'ring-green-400'); setTimeout(() => tableBox.classList.remove('ring-4', 'ring-green-400'), 800); Swal.fire({ toast: true, position: 'top', icon: 'success', title: 'บิลนี้กำลังเปิดแสดงอยู่', showConfirmButton: false, timer: 1500 }); return;
+                    }
+                    let fNew = Object.keys(inboxNew).find(id => id.includes(query)); let fQC = Object.keys(inboxQC).find(id => id.includes(query));
+                    if(fNew) loadBill(fNew, 'NEW'); else if(fQC) loadBill(fQC, 'QC_PASSED'); else Swal.fire({ icon: 'warning', title: 'ไม่พบบิล', text: `รหัส "${query}" อาจจะถูกเปิดไปแล้ว หรือยังไม่ส่งมาครับ`});
+                    return;
+                }
+
+                const lowerQuery = query.toLowerCase();
+                let matches = masterDb.filter(i => 
+                    (i.Name && i.Name.toLowerCase().includes(lowerQuery)) || 
+                    (i.Barcode && i.Barcode.toLowerCase().includes(lowerQuery)) || 
+                    (i.posCode && i.posCode.toLowerCase().includes(lowerQuery))
+                );
+
+                if (matches.length === 0) {
+                    Swal.fire({ toast: true, position: 'top', icon: 'error', title: 'ไม่พบสินค้าในฐานข้อมูล', showConfirmButton: false, timer: 1500 });
+                } else if (matches.length === 1) {
+                    addManualItemToBill(matches[0]);
+                } else {
+                    let html = '<div class="text-left max-h-[300px] overflow-y-auto">';
+                    matches.forEach((m, idx) => { 
+                        html += `<div class="border-b p-3 hover:bg-gray-50 cursor-pointer flex justify-between" onclick="Swal.close(); selectManualResult(${idx})">
+                                    <div><div class="font-bold text-sm text-gray-800">${m.Name}</div><div class="text-xs text-blue-600 mt-1">POS: ${m.posCode}</div></div>
+                                    <div class="text-xs font-bold text-gray-500 bg-gray-200 px-2 py-1 rounded h-fit">${m.Unit}</div>
+                                 </div>`; 
+                    });
+                    html += '</div>'; window.tempManualResults = matches; Swal.fire({ title: 'พบหลายรายการ', html: html, showConfirmButton: false });
+                }
+            }
+        }
+
+        window.selectManualResult = function(index) { if(window.tempManualResults && window.tempManualResults[index]) { addManualItemToBill(window.tempManualResults[index]); window.tempManualResults = null; } }
+
+        function addManualItemToBill(dbItem) {
+            if(!activeBillId) { activeBillId = `RCV-${Date.now().toString().slice(-6)}`; activeState = 'QC_PASSED'; activePicker = "แอดมินคอมพิวเตอร์"; }
+            let posCode = dbItem.posCode || dbItem.Barcode; 
+            let idx = activeItems.findIndex(i => i.posCode === posCode || i.barcode === dbItem.Barcode);
+            
+            if(idx > -1) {
+                activeItems[idx].actQty += 1;
+                activeItems[idx].includePos = true;
+            } else { 
+                activeItems.unshift({ 
+                    barcode: dbItem.Barcode, 
+                    original_barcode: dbItem.Barcode, 
+                    name: dbItem.Name, 
+                    unit: dbItem.Unit || "ชิ้น", 
+                    reqQty: 0, 
+                    actQty: 1, 
+                    posCode: dbItem.posCode,
+                    selectedCode: dbItem.posCode || dbItem.Barcode,
+                    includePos: true
+                }); 
+            }
+            saveData(); updateUI(); Swal.fire({toast:true, position:'top', icon:'success', title:`เพิ่ม ${dbItem.Name} ลงบิลแล้ว`, showConfirmButton:false, timer:1000});
+        }
+
+        function showInbox(type) {
+            const inbox = type === 'NEW' ? inboxNew : inboxQC; const bills = Object.keys(inbox);
+            if(bills.length === 0) return Swal.fire({toast:true, position:'top', title:'กล่องข้อความว่างเปล่า', icon:'info', showConfirmButton:false, timer:1500});
+            
+            let groupedBills = {};
+            bills.forEach(id => {
+                let data = inbox[id]; let pickerName = Array.isArray(data) ? "ไม่ระบุ" : (data.picker || "ไม่ระบุ");
+                if(!groupedBills[pickerName]) groupedBills[pickerName] = [];
+                groupedBills[pickerName].push({ id: id, data: data });
+            });
+
+            let html = '<div class="text-left max-h-[400px] overflow-y-auto pb-2 pr-2">';
+            for(let picker in groupedBills) {
+                html += `<div class="bg-blue-100 text-blue-800 px-3 py-2 rounded-lg font-bold mb-2 mt-3 flex justify-between items-center shadow-sm"><div class="flex items-center"><i class="fas fa-user-tag text-blue-600 mr-2 text-lg"></i> ผู้จัด: ${picker}</div><span class="bg-blue-600 text-white text-[11px] px-2.5 py-1 rounded-full shadow-sm">${groupedBills[picker].length} บิล</span></div>`;
+                groupedBills[picker].forEach(b => {
+                    let iCount = Array.isArray(b.data) ? b.data.length : (b.data.items ? b.data.items.length : 0);
+                    html += `<div class="border border-gray-200 p-3 mb-2 ml-4 rounded-lg bg-white flex justify-between items-center shadow-sm hover:bg-blue-50 transition border-l-4 border-l-blue-400"><div><div class="font-bold text-gray-800 text-sm">${b.id}</div><div class="text-[11px] text-gray-500 mt-0.5"><i class="fas fa-box-open mr-1"></i> ${iCount} รายการ</div></div><button onclick="loadBill('${b.id}', '${type}')" class="bg-blue-600 text-white px-4 py-1.5 rounded-lg font-bold hover:bg-blue-700 shadow-sm text-xs transition">เปิดบิล</button></div>`;
+                });
+            }
+            html += '</div>'; Swal.fire({ title: type === 'NEW' ? '📥 บิลเข้าใหม่ (จัดหมวดหมู่)' : '✅ บิลผ่าน QC (จัดหมวดหมู่)', html: html, showConfirmButton: false });
+        }
+
+        window.loadBill = function(id, type) {
+            Swal.close(); 
+            const inbox = type === 'NEW' ? inboxNew : inboxQC;
+            let rawData = inbox[id];
+            let targetItems = Array.isArray(rawData) ? rawData : rawData.items;
+            let targetPicker = Array.isArray(rawData) ? "ไม่ระบุ" : (rawData.picker || "ไม่ระบุ");
+            
+            let newMappedItems = processItemsWithSmartMapping(targetItems.map(i => ({ 
+                ...i, reqQty: i.qty||i.reqQty, actQty: type==='NEW' ? 0 : (i.actQty||0), 
+                includePos: type==='NEW' ? true : ((i.actQty||0) > 0),
+                selectedCode: i.selectedCode || i.posCode || i.barcode
+            })));
+
+            if (activeBillId && activeItems.length > 0) {
+                Swal.fire({ 
+                    title: 'รวมกับบิลบนหน้าจอไหม?', html: `หน้าจอคุณมีบิล <b>${activeBillId}</b> เปิดค้างอยู่<br>ต้องการนำบิล <b>${id}</b> มารวมกัน หรือเก็บพักบิลเดิมแล้วเปิดบิลนี้แทน?`, 
+                    icon: 'question', showDenyButton: true, showCancelButton: true, confirmButtonColor: '#3B82F6', denyButtonColor: '#F59E0B', confirmButtonText: 'แทนที่ (พักบิลเดิม)', denyButtonText: 'รวมบิล (Merge)', cancelButtonText: 'ยกเลิก'
+                }).then((result) => {
+                    if (result.isConfirmed) { 
+                        if (activeState === 'NEW') inboxNew[activeBillId] = { items: activeItems, picker: activePicker }; else if (activeState === 'QC_PASSED') inboxQC[activeBillId] = { items: activeItems, picker: activePicker };
+                        activeItems = newMappedItems; activeBillId = id; activeState = type; activePicker = targetPicker; 
+                        delete inbox[id]; saveData(); updateUI(); triggerHighlight();
+                    } else if (result.isDenied) {
+                        if(activeState !== type) return Swal.fire('รวมบิลไม่ได้', 'ไม่สามารถรวมบิล [เข้าใหม่] กับบิล [ผ่าน QC] ได้', 'warning');
+                        newMappedItems.forEach(newItem => { 
+                            let idx = activeItems.findIndex(i => i.posCode === newItem.posCode); 
+                            if(idx > -1) { activeItems[idx].reqQty += newItem.reqQty; activeItems[idx].actQty += newItem.actQty; } 
+                            else { activeItems.push(newItem); }
+                        });
+                        activeBillId = activeBillId.includes('BATCH') ? activeBillId : `BATCH-${Date.now().toString().slice(-5)}`; 
+                        if (!activePicker.includes(targetPicker) && targetPicker !== "ไม่ระบุ") { activePicker = activePicker === "ไม่ระบุ" ? targetPicker : activePicker + " & " + targetPicker; }
+                        delete inbox[id]; saveData(); updateUI(); triggerHighlight(); Swal.fire({toast: true, position: 'top', icon: 'success', title: 'รวมบิลสำเร็จ!', showConfirmButton: false, timer: 1500});
+                    }
+                });
+            } else {
+                activeItems = newMappedItems; activeBillId = id; activeState = type; activePicker = targetPicker; 
+                delete inbox[id]; saveData(); updateUI(); triggerHighlight();
+            }
+        }
+
+        function triggerHighlight() {
+            const tableBox = document.getElementById('table-container'); 
+            tableBox.classList.add('ring-4', 'ring-blue-400'); 
+            setTimeout(() => tableBox.classList.remove('ring-4', 'ring-blue-400'), 800); 
+        }
+
+        window.updateSelectedCode = function(index, selectedValue) {
+            activeItems[index].selectedCode = selectedValue; saveData();
+        }
+
+        window.copyCodeToClipboard = function(idx) {
+            let selectBox = document.getElementById(`select-code-${idx}`);
+            if(!selectBox) return;
+            let codeToCopy = selectBox.value;
+            navigator.clipboard.writeText(codeToCopy).then(() => {
+                Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `ก๊อปปี้รหัส: ${codeToCopy}`, showConfirmButton: false, timer: 1200 });
+            }).catch(err => {
+                Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'ก๊อปปี้ล้มเหลว', showConfirmButton: false, timer: 1200 });
+            });
+        }
+
+        window.setAllCodes = function(type) {
+            if(activeItems.length === 0) return;
+            activeItems.forEach((i, idx) => { 
+                let newCode = (type === 'pos') ? i.posCode : i.barcode;
+                i.selectedCode = newCode; 
+            });
+            saveData(); updateUI();
+            Swal.fire({ toast: true, position: 'top', icon: 'success', title: `เปลี่ยนให้ใช้รหัส ${type.toUpperCase()} ทั้งบิลเรียบร้อย!`, showConfirmButton: false, timer: 1500 });
+        }
+
+        // 🟢 ฟังก์ชันจัดตารางแยกตามหมวดหมู่ (Group by Unit)
+        function updateUI() {
+            let nC = Object.keys(inboxNew).length; let qC = Object.keys(inboxQC).length;
+            document.getElementById('badge-new').innerText = nC; if(nC>0) document.getElementById('badge-new').classList.remove('hidden'); else document.getElementById('badge-new').classList.add('hidden');
+            document.getElementById('badge-qc').innerText = qC; if(qC>0) document.getElementById('badge-qc').classList.remove('hidden'); else document.getElementById('badge-qc').classList.add('hidden');
+            document.getElementById('display-bill').innerText = activeBillId || "-";
+
+            const pickerDisplay = document.getElementById('picker-display');
+            if(activePicker && activePicker !== "ไม่ระบุ") { pickerDisplay.classList.remove('hidden'); pickerDisplay.querySelector('span').innerText = activePicker; } else { pickerDisplay.classList.add('hidden'); }
+
+            const actionZone = document.getElementById('action-buttons-zone'); const modeAlert = document.getElementById('mode-alert'); const botZone = document.getElementById('bot-settings-zone');
+            
+            if(!activeBillId) {
+                actionZone.innerHTML = ""; modeAlert.classList.add('hidden'); botZone.classList.add('hidden'); document.getElementById('table-body').innerHTML = `<tr><td colspan="6" class="p-10 text-center text-gray-400 font-bold text-lg">ยิงบาร์โค้ดหัวบิล หรือค้นหาชื่อสินค้า...</td></tr>`; return;
+            }
+
+            if(activeState === 'NEW') {
+                modeAlert.classList.remove('hidden'); modeAlert.className = "mb-4 p-3 rounded-lg font-bold border bg-yellow-50 text-yellow-800 border-yellow-300"; modeAlert.innerHTML = "<i class='fas fa-info-circle'></i> <b>โหมดเตรียมจัดของ:</b> พิมพ์ใบจัดของ แล้วกดปุ่ม 'ส่งให้มือถือ QC' เมื่อจัดของเสร็จแล้ว"; botZone.classList.add('hidden');
+                actionZone.innerHTML = `<button onclick="printPickList()" class="bg-gray-800 text-white px-5 py-3 rounded-lg font-bold shadow-sm hover:bg-gray-900 transition text-lg"><i class="fas fa-print mr-1"></i> 1. พิมพ์ใบจัดของ</button><button onclick="sendToQC()" class="bg-yellow-500 text-white px-5 py-3 rounded-lg font-bold shadow-sm hover:bg-yellow-600 transition text-lg"><i class="fas fa-mobile-alt mr-1"></i> 2. ส่งให้มือถือ QC</button>`;
+            } else {
+                modeAlert.classList.remove('hidden'); modeAlert.className = "mb-4 p-3 rounded-lg font-bold border bg-green-50 text-green-800 border-green-300"; modeAlert.innerHTML = "<i class='fas fa-check-circle'></i> <b>โหมดพร้อมเข้า POS:</b> บิลตรวจเสร็จแล้ว กดรันบอท POS ได้เลย"; botZone.classList.remove('hidden');
+                actionZone.innerHTML = `<button onclick="exportToTXT()" class="bg-indigo-600 text-white px-5 py-3 rounded-lg font-bold shadow-sm hover:bg-indigo-700 transition text-lg"><i class="fas fa-file-download mr-1"></i> โหลด TXT</button><button onclick="exportToSmartBot()" class="bg-green-600 text-white px-6 py-3 rounded-lg font-bold shadow-lg hover:bg-green-700 transition text-lg"><i class="fas fa-robot mr-1"></i> รันบอทเข้า POS</button>`;
+            }
+            renderTable();
+        }
+
+        // 🟢 จัดกลุ่มตามหน่วยนับก่อนแสดงผล
+        function renderTable() {
+            const tbody = document.getElementById('table-body');
+            if (activeItems.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="p-10 text-center text-gray-400 font-bold text-lg">ยิงบาร์โค้ดหัวบิล หรือค้นหาชื่อสินค้า...</td></tr>`;
+                return;
+            }
+
+            let htmlStr = '';
+
+            // 1. จัดกลุ่มสินค้าตามหน่วย โดยเก็บ Index เดิมไว้เพื่อให้อ้างอิงการแก้ไขถูกต้อง
+            let groups = {};
+            activeItems.forEach((i, idx) => {
+                let u = i.unit || "อื่นๆ";
+                if (!groups[u]) groups[u] = [];
+                groups[u].push({ item: i, idx: idx });
+            });
+
+            // 2. เรียงลำดับหมวดหมู่ (แบบเดียวกับพิมพ์ PDF)
+            const unitPrio = { "ลัง": 1, "หีบ": 2, "แพ็ค": 3, "โหล": 4, "กล่อง": 5, "แพค": 6, "ชิ้น": 7 };
+            const sortedUnits = Object.keys(groups).sort((a, b) => (unitPrio[a]||99) - (unitPrio[b]||99));
+
+            // 3. สร้างตารางแยกตามหมวด
+            sortedUnits.forEach(unit => {
+                htmlStr += `<tr class="bg-indigo-100/50 border-y-2 border-indigo-200">
+                    <td colspan="6" class="p-2 pl-4 text-left font-bold text-indigo-800">
+                        <i class="fas fa-layer-group mr-2 text-indigo-500"></i> หมวดหมู่: ${unit} 
+                        <span class="text-xs font-normal text-indigo-600 bg-indigo-200 px-2 py-0.5 rounded-full ml-2">${groups[unit].length} รายการ</span>
+                    </td>
+                </tr>`;
+
+                groups[unit].forEach(data => {
+                    let i = data.item;
+                    let idx = data.idx; // คง Index เดิมไว้
+                    
+                    let diff = i.actQty - i.reqQty; let d = '';
+                    if(activeState === 'NEW') { d = `<span class="text-gray-500">รอตรวจ (${i.reqQty} ${i.unit})</span>`; }
+                    else {
+                        if(diff < 0) d = `<strong class="text-red-500">${i.actQty}</strong> <span class="text-gray-500 text-sm">/ ${i.reqQty} ${i.unit}</span> <span class="bg-red-100 text-red-600 px-2 py-0.5 rounded text-xs ml-2">ขาด ${Math.abs(diff)}</span>`;
+                        else if(diff > 0) d = `<strong class="text-green-600">${i.actQty}</strong> <span class="text-gray-500 text-sm">/ ${i.reqQty} ${i.unit}</span> <span class="bg-yellow-100 text-yellow-600 px-2 py-0.5 rounded text-xs ml-2">เกิน ${diff}</span>`;
+                        else d = `<strong class="text-green-600">${i.actQty}</strong> <span class="text-gray-500 text-sm">/ ${i.reqQty} ${i.unit}</span> <span class="bg-green-100 text-green-600 px-2 py-0.5 rounded text-xs ml-2">ครบเป๊ะ</span>`;
+                    }
+
+                    let btnCls = i.includePos ? "bg-blue-600 text-white" : "bg-gray-300 text-gray-600"; let btnTxt = i.includePos ? "✅ เอา" : "❌ ตัดออก"; let rowOp = i.includePos ? "" : "opacity-40";
+
+                    let curSelected = i.selectedCode || i.posCode || i.barcode;
+                    let optPOS = `<option value="${i.posCode}" ${curSelected === i.posCode ? 'selected' : ''}>[POS] ${i.posCode}</option>`;
+                    let optBar = `<option value="${i.barcode}" ${curSelected === i.barcode ? 'selected' : ''}>[BAR] ${i.barcode}</option>`;
+                    
+                    let codeDropdown = `
+                    <div class="flex items-center gap-1">
+                        <select id="select-code-${idx}" onchange="updateSelectedCode(${idx}, this.value)" class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm font-mono text-blue-700 font-bold outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer bg-blue-50 hover:bg-blue-100">
+                            ${optPOS}
+                            ${optBar}
+                        </select>
+                        <button onclick="copyCodeToClipboard(${idx})" class="bg-gray-200 hover:bg-gray-300 text-gray-600 px-2.5 py-1.5 rounded transition shadow-sm" title="คัดลอกรหัส">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                    </div>`;
+
+                    htmlStr += `<tr class="border-b ${rowOp} transition hover:bg-blue-50">
+                        <td class="p-3 text-center text-gray-500 font-bold">${idx + 1}</td>
+                        <td class="p-3 text-center"><button class="${btnCls} px-3 py-1 rounded text-xs font-bold" onclick="togglePos(${idx})">${btnTxt}</button></td>
+                        <td class="p-3">${codeDropdown}</td>
+                        <td class="p-3 font-bold text-gray-800">${i.name}</td>
+                        <td class="p-3 text-center">${d}</td>
+                        <td class="p-3 text-center"><button onclick="editItem(${idx})" class="text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 p-2 rounded-lg transition"><i class="fas fa-edit"></i></button></td>
+                    </tr>`;
+                });
+            });
+            tbody.innerHTML = htmlStr;
+        }
+
+        window.editItem = function(idx) {
+            let item = activeItems[idx]; let unitOptions = availableUnits.map(u => `<option value="${u}" ${item.unit === u ? 'selected' : ''}>${u}</option>`).join('');
+            Swal.fire({
+                title: '<i class="fas fa-edit text-indigo-500 mr-2"></i>แก้ไขรายการ',
+                html: `<div class="text-left font-sarabun text-sm bg-gray-50 p-4 rounded-lg border border-gray-200"><div class="font-bold text-blue-700 text-base mb-1">${item.name}</div><div class="text-xs text-gray-500 mb-4 border-b pb-2">POS Code: <span class="font-mono text-gray-800 font-bold">${item.posCode || item.barcode}</span></div>
+                        <label class="block font-bold mb-1 text-gray-700">ยอดรับจริง (ส่งเข้า POS):</label><input type="number" id="edit-actQty" class="w-full p-2 border border-gray-300 rounded-lg mb-3 font-bold text-xl text-center text-blue-600 outline-none focus:ring-2 focus:ring-blue-400" value="${item.actQty}" min="0">
+                        <label class="block font-bold mb-1 text-gray-700">ยอดเบิกเดิม:</label><input type="number" id="edit-reqQty" class="w-full p-2 border border-gray-300 rounded-lg mb-3 text-center outline-none focus:ring-2 focus:ring-blue-400" value="${item.reqQty}" min="0">
+                        <label class="block font-bold mb-1 text-gray-700">หน่วยนับ:</label><select id="edit-unit" class="w-full p-2 border border-gray-300 rounded-lg font-bold text-indigo-700 outline-none focus:ring-2 focus:ring-indigo-400">${unitOptions}</select></div>`,
+                showCancelButton: true, confirmButtonColor: '#4F46E5', confirmButtonText: 'บันทึกข้อมูล', cancelButtonText: 'ยกเลิก',
+                preConfirm: () => { return { actQty: parseInt(document.getElementById('edit-actQty').value) || 0, reqQty: parseInt(document.getElementById('edit-reqQty').value) || 0, unit: document.getElementById('edit-unit').value } }
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    let newUnit = result.value.unit;
+                    activeItems[idx].actQty = result.value.actQty; 
+                    activeItems[idx].reqQty = result.value.reqQty; 
+                    
+                    if (activeItems[idx].unit !== newUnit) {
+                        activeItems[idx].unit = newUnit;
+                        activeItems[idx] = processItemsWithSmartMapping([activeItems[idx]])[0];
+                    }
+                    
+                    activeItems[idx].includePos = activeItems[idx].actQty > 0; saveData(); updateUI(); Swal.fire({toast: true, position: 'top-end', icon: 'success', title: 'อัปเดตข้อมูลแล้ว', showConfirmButton: false, timer: 1500});
+                }
+            });
+        }
+
+        function togglePos(idx) { activeItems[idx].includePos = !activeItems[idx].includePos; saveData(); updateUI(); }
+
+        function sendToQC() {
+            Swal.fire({ title: 'ส่งให้ QC ตรวจสอบ?', text: "บิลจะถูกส่งไปยังแอปมือถือ QC ของพนักงานทันที", icon: 'question', showCancelButton: true, confirmButtonText: 'ส่งเลย!', confirmButtonColor: '#F59E0B'
+            }).then((result) => {
+                if(result.isConfirmed) {
+                    client.publish("branch-nuea-to-qc", JSON.stringify({ billId: activeBillId, items: activeItems }));
+                    addBillToHistory(activeBillId, "ส่งไปมือถือ QC", activeItems);
+                    Swal.fire('ส่งสำเร็จ!', 'พนักงานสามารถเปิดแอป QC เพื่อสแกนตรวจได้เลย', 'success');
+                    activeItems = []; activeBillId = ""; activeState = ""; activePicker = ""; saveData(); updateUI();
+                }
+            });
+        }
+
+        function addBillToHistory(billId, actionStr, itemsData) { receiverHistory.unshift({ billId: billId, action: actionStr, timestamp: getThaiDateTime(), items: JSON.parse(JSON.stringify(itemsData)) }); if(receiverHistory.length > 100) receiverHistory.pop(); localStorage.setItem('r_history_log', JSON.stringify(receiverHistory)); }
+        function showHistory() {
+            if(receiverHistory.length === 0) return Swal.fire({toast:true, position:'top', icon:'info', title:'ยังไม่มีประวัติ', showConfirmButton:false, timer:1500});
+            let html = '<div class="text-left max-h-[400px] overflow-y-auto pr-2">';
+            receiverHistory.forEach((log, index) => { html += `<div class="border rounded-lg p-3 mb-3 bg-gray-50 flex justify-between items-center shadow-sm"><div><div class="font-bold text-blue-700 text-lg font-mono">${log.billId}</div><div class="text-xs text-gray-500">${log.timestamp}</div><div class="text-sm font-bold text-indigo-600 mt-1"><i class="fas fa-check-circle mr-1"></i>${log.action}</div></div><div class="flex flex-col gap-2"><div class="bg-white border text-gray-700 px-3 py-1 rounded font-bold text-sm text-center">${log.items ? log.items.length : 0} รายการ</div><button onclick="downloadHistoryJSON(${index})" class="bg-gray-800 text-white px-3 py-1.5 rounded text-xs font-bold hover:bg-black transition shadow-sm"><i class="fas fa-download mr-1"></i> โหลดไฟล์</button></div></div>`; });
+            html += '</div>'; Swal.fire({ title: '<i class="fas fa-history text-purple-600 mr-2"></i> ประวัติการทำงาน', html: html, showConfirmButton: true, confirmButtonText: 'ปิดหน้าต่าง', confirmButtonColor: '#6B7280' });
+        }
+        window.downloadHistoryJSON = function(index) { const log = receiverHistory[index]; const dataObj = { billId: log.billId, state: "HISTORY_BACKUP", timestamp: log.timestamp, items: log.items }; const blob = new Blob([JSON.stringify(dataObj, null, 2)], { type: "application/json" }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `History_${log.billId}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(a.href); }
+        function saveToFile() {
+            if (activeItems.length === 0) return Swal.fire({toast:true, position:'top', icon:'warning', title:'ไม่มีข้อมูลให้เซฟ', showConfirmButton:false, timer:1500});
+            const blob = new Blob([JSON.stringify({ billId: activeBillId, picker: activePicker, state: activeState, timestamp: getThaiDateTime(), items: activeItems }, null, 2)], { type: "application/json" });
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `Backup_${activeBillId}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(a.href); Swal.fire({toast: true, position: 'top-end', icon: 'success', title: 'เซฟไฟล์สำเร็จ!', showConfirmButton: false, timer: 1500});
+        }
+        function handleFileLoad(event) {
+            const file = event.target.files[0]; if (!file) return; const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (data.items && Array.isArray(data.items)) {
+                        Swal.fire({ title: 'โหลดไฟล์สำเร็จ', text: `พบข้อมูล ${data.items.length} รายการ`, showDenyButton: true, showCancelButton: true, confirmButtonText: 'รับเป็นบิลผ่าน QC', denyButtonText: 'รับเป็นบิลรอจัดของ', confirmButtonColor: '#10B981', denyButtonColor: '#F59E0B'
+                        }).then((result) => {
+                            if (result.isConfirmed || result.isDenied) {
+                                activeState = result.isConfirmed ? 'QC_PASSED' : 'NEW';
+                                activeItems = data.items.map(i => { let actQ = activeState === 'NEW' ? 0 : (i.actQty !== undefined ? i.actQty : (i.qty || 1)); return { ...i, reqQty: i.reqQty || i.qty || 1, actQty: actQ, includePos: activeState === 'NEW' ? true : (actQ > 0), selectedCode: i.selectedCode || i.posCode || i.barcode }; });
+                                activeItems = processItemsWithSmartMapping(activeItems); 
+                                activeBillId = data.billId || `RCV-${Date.now().toString().slice(-6)}`; activePicker = data.picker || "ไม่ระบุ"; saveData(); updateUI();
+                            } event.target.value = ''; 
+                        });
+                    }
+                } catch (err) { Swal.fire('ข้อผิดพลาด', 'อ่านไฟล์ไม่ได้', 'error'); }
+            }; reader.readAsText(file);
+        }
+
+        function saveResultPDF() {
+            const validItems = activeItems; if(!validItems.length) return Swal.fire({title: 'ไม่มีข้อมูล', text: 'ไม่มีรายการที่ให้พิมพ์', icon: 'warning'});
+            let html = `<div class="pdf-report"><h2 style="text-align:center; margin-bottom: 5px;">รายงานสรุปผลการรับเข้าสินค้า</h2><p style="text-align:center; font-size:13px; color:#555; margin-top:0;">รหัสบิล: ${activeBillId} | ผู้จัดของ: <b>${activePicker}</b><br>พิมพ์เมื่อ: ${getThaiDateTime()} | ยอดรวม: ${validItems.length} รายการ</p>
+                <table><thead><tr><th style="width:5%;">#</th><th style="width:20%;">รหัสอ้างอิง</th><th style="width:40%;">ชื่อสินค้า</th><th style="width:10%;">ยอดเบิก</th><th style="width:10%;">ยอดรับจริง</th><th style="width:15%;">ส่วนต่าง</th></tr></thead><tbody>`;
+            validItems.forEach((item, index) => {
+                const diff = item.reqQty - item.actQty; let diffText = diff > 0 ? (diff === item.reqQty ? `<b>ไม่มีของ</b>` : `ขาด ${diff}`) : '-';
+                let printCode = item.selectedCode || item.posCode || item.barcode; 
+                html += `<tr class="${diff > 0 ? 'shortage-row' : ''}"><td style="text-align:center;">${index + 1}</td><td style="text-align:center; padding: 4px 2px;"><svg id="res-barcode-${index}" class="item-barcode-svg"></svg></td><td>${item.name}</td><td style="text-align:center;">${item.reqQty} <span style="font-size:10px;">${item.unit}</span></td><td style="text-align:center; font-size:14px; color:${item.actQty === 0 ? '#DC2626' : '#000'}"><b>${item.actQty}</b></td><td style="text-align:center; color:${diff>0?'#DC2626':'#374151'}">${diffText}</td></tr>`;
+            });
+            html += `</tbody></table></div>`; document.getElementById('print-container').innerHTML = html; 
+            validItems.forEach((item, index) => {
+                let printCode = item.selectedCode || item.posCode || item.barcode;
+                try { JsBarcode(`#res-barcode-${index}`, printCode, { width: 1.2, height: 25, displayValue: true, fontSize: 10, margin: 0, textMargin: 2 }); } 
+                catch(e) { document.getElementById(`res-barcode-${index}`).outerHTML = `<span style="font-family:monospace; font-size:12px;">${printCode}</span>`; }
+            }); setTimeout(() => { window.print(); }, 300);
+        }
+
+        function printPickList() {
+            const validItems = activeItems.filter(item => item.includePos); if(!validItems.length) return;
+            let html = `<div class="pdf-header"><div class="pdf-title-box"><div class="pdf-title">ใบจัดเตรียมสินค้า (Picking List)</div><div class="pdf-meta">รหัสบิล: ${activeBillId} | ผู้จัดของ: <b>${activePicker}</b><br>พิมพ์เมื่อ: ${getThaiDateTime()}</div></div><svg id="pdf-barcode"></svg></div><div class="pdf-columns">`;
+            const grouped = validItems.reduce((acc, i) => { (acc[i.unit] = acc[i.unit] || []).push(i); return acc; }, {}); const unitPrio = { "ลัง": 1, "หีบ": 2, "แพ็ค": 3, "โหล": 4, "กล่อง": 5, "แพค": 6, "ชิ้น": 7 }; const sortedUnits = Object.keys(grouped).sort((a, b) => (unitPrio[a]||99) - (unitPrio[b]||99));
+            sortedUnits.forEach(unit => {
+                html += `<table class="pick-table"><thead><tr class="cat-header"><th colspan="3">▶ หมวดหมู่: ${unit}</th></tr><tr class="sub-header"><th class="col-name">ชื่อสินค้า</th><th class="col-qty">จำนวน</th><th class="col-unit">หน่วย</th></tr></thead><tbody>`;
+                grouped[unit].forEach(item => { html += `<tr><td class="td-name">${item.name}</td><td class="td-qty">${item.reqQty}</td><td class="td-unit">${item.unit}</td></tr>`; }); html += `</tbody></table>`; 
+            });
+            html += `</div><div class="pdf-sign"><div class="sign-box">_________________________<br><br>พนักงานจัดของ</div><div class="sign-box">_________________________<br><br>พนักงานตรวจรับ</div></div>`;
+            document.getElementById('print-container').innerHTML = html; JsBarcode("#pdf-barcode", activeBillId, { width: 1.5, height: 35, displayValue: true, fontSize: 11, margin: 0 }); window.print();
+        }
+
+        function exportToTXT() { 
+            let validItemsToExport = activeItems.filter(i => i.includePos && i.actQty > 0);
+            let pendingItems = activeItems.filter(i => (!i.includePos && i.reqQty > 0) || (i.actQty < i.reqQty)).map(i => { let diff = i.reqQty - (i.includePos ? i.actQty : 0); return { ...i, reqQty: diff, actQty: 0, includePos: true }; });
+            if(validItemsToExport.length === 0) return Swal.fire('ไม่มีข้อมูล', 'ไม่มีสินค้าที่จะเอาเข้า POS (ยอดเป็น 0 หมดเลย)', 'warning');
+            
+            let exportProcess = () => {
+                let txt = ""; 
+                validItemsToExport.forEach(i => { 
+                    let printCode = i.selectedCode || i.posCode || i.barcode; 
+                    txt += `${printCode},${i.actQty}\r\n`; 
+                });
+                const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt])); a.download = `POS_${activeBillId}.txt`; a.click();
+                addBillToHistory(activeBillId, "โหลดไฟล์ TXT", activeItems); activeItems = []; activeBillId = ""; activeState = ""; activePicker = ""; saveData(); updateUI();
+            };
+
+            if (pendingItems.length > 0) {
+                Swal.fire({ title: 'มีสินค้าขาดส่ง / ค้างรับ!', text: `พบรายการที่ยอดไม่ครบ ${pendingItems.length} รายการ ต้องการสร้างเป็น "บิลค้างรับ" ไว้ทำต่อไหม?`, icon: 'question', showCancelButton: true, confirmButtonText: 'สร้างบิลค้างรับ', cancelButtonText: 'ไม่ต้องสร้าง'
+                }).then(res => { if(res.isConfirmed) { let newId = activeBillId.includes('(ค้างรับ)') ? activeBillId : activeBillId + " (ค้างรับ)"; inboxNew[newId] = { items: pendingItems, picker: activePicker }; saveData(); updateUI(); Swal.fire({toast: true, position: 'top', icon: 'success', title: 'สร้างบิลค้างรับเรียบร้อย', showConfirmButton: false, timer: 1500}); } exportProcess(); });
+            } else { exportProcess(); }
+        }
+
+        function exportToSmartBot() {
+            const nl = document.getElementById('bot-newline-action').value; const speedFactor = parseFloat(document.getElementById('bot-speed').value) || 1.0; const countdownTime = parseInt(document.getElementById('bot-countdown').value) || 5; const checkpoint = parseInt(document.getElementById('bot-checkpoint').value) || 0;
+            let validItems = activeItems.filter(i => i.includePos && i.actQty > 0); let total = validItems.length;
+            let pendingItems = activeItems.filter(i => (!i.includePos && i.reqQty > 0) || (i.actQty < i.reqQty)).map(i => { let diff = i.reqQty - (i.includePos ? i.actQty : 0); return { ...i, reqQty: diff, actQty: 0, includePos: true }; });
+
+            if(total === 0) return Swal.fire('ไม่มีข้อมูล', 'ไม่มีสินค้าที่จะนำเข้า POS ได้เลย', 'warning');
+
+            let executeBotGeneration = () => {
+                let t2 = Math.floor(1500 * speedFactor); let t3 = Math.floor(1200 * speedFactor); 
+                let vbs = `Set objShell = WScript.CreateObject("WScript.Shell")\r\nIf InStr(LCase(WScript.FullName), "wscript.exe") > 0 Then\r\n  objShell.Run "cmd.exe /c title 🤖 POS SMART BOT & color 0A & chcp 65001 >nul & cscript.exe //nologo """ & WScript.ScriptFullName & """ & pause", 1, False\r\n  WScript.Quit\r\nEnd If\r\n\r\n`;
+                vbs += `WScript.Echo "======================================================="\r\nWScript.Echo "  🤖 POS SMART BOT - WAITING FOR USER..."\r\nWScript.Echo "======================================================="\r\n`;
+                vbs += `MsgBox "บอทพร้อมทำงานแล้ว! (" & ${total} & " รายการ)" & vbCrLf & vbCrLf & "เมื่อคุณกดปุ่ม [OK] บอทจะเริ่มนับถอยหลัง ${countdownTime} วินาที" & vbCrLf & "👉 ให้คุณรีบเอาเมาส์ไป 'คลิก' ที่ 'ช่องใส่รหัสบาร์โค้ด' ใน POS ให้เคอร์เซอร์กระพริบรอไว้เลยครับ", 64, "🟢 บอทพร้อมทำงาน"\r\n`;
+                vbs += `For i = ${countdownTime} To 1 Step -1\r\n  WScript.Echo ">>> Starting in " & i & " seconds... (Focus your POS!)"\r\n  WScript.Sleep 1000\r\nNext\r\n\r\n`;
+
+                let count = 1;
+                validItems.forEach(i => {
+                    let printCode = i.selectedCode || i.posCode || i.barcode; 
+                    vbs += `WScript.Echo "[${count}/${total}] Typing Code: ${printCode} | Qty: ${i.actQty}"\r\n`;
+                    vbs += `objShell.SendKeys "${printCode}"\r\n`; vbs += `WScript.Sleep 200\r\n`; vbs += `objShell.SendKeys "{ENTER}"\r\n`; vbs += `WScript.Sleep ${t2}\r\n`;
+                    vbs += `objShell.SendKeys "${i.actQty}"\r\n`; vbs += `WScript.Sleep 200\r\n`; vbs += `objShell.SendKeys "${nl}"\r\n`; vbs += `WScript.Sleep ${t3}\r\n\r\n`;
+                    
+                    if (checkpoint > 0 && count % checkpoint === 0 && count < total) {
+                        vbs += `WScript.Echo ">>> CHECKPOINT! Waiting 10 seconds for auto-resume or click OK..."\r\n`;
+                        vbs += `ret = objShell.Popup("พิมพ์ไปแล้ว ${count} รายการ" & vbCrLf & vbCrLf & "✅ ตรวจสอบความถูกต้องบน POS" & vbCrLf & "รอ 10 วินาที ระบบจะทำงานต่ออัตโนมัติ (หรือกด OK เพื่อไปต่อทันที)", 10, "⏸ พักเบรก (Checkpoint)", 64)\r\n`;
+                        vbs += `For i = ${countdownTime} To 1 Step -1\r\n  WScript.Echo ">>> Resuming in " & i & " seconds..."\r\n  WScript.Sleep 1000\r\nNext\r\n\r\n`;
+                    }
+                    count++;
+                });
+
+                vbs += `WScript.Echo "======================================================="\r\nWScript.Echo "  ✨ SUCCESS! All items are inputted. (เสร็จสมบูรณ์)"\r\n`;
+                vbs += `MsgBox "พิมพ์เข้า POS จำนวน ${total} รายการ เรียบร้อยแล้ว!", 64, "Finished"\r\n`;
+
+                const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([vbs], {type:'text/vbs'})); a.download = `Bot_${activeBillId}.vbs`; a.click();
+                addBillToHistory(activeBillId, "รันบอท POS สำเร็จ", activeItems); activeItems = []; activeBillId = ""; activeState = ""; activePicker = ""; saveData(); updateUI();
+            };
+
+            if (pendingItems.length > 0) {
+                Swal.fire({
+                    title: 'มีสินค้าขาดส่ง / ค้างรับ!', text: `พบรายการที่ยอดไม่ครบ ${pendingItems.length} รายการ ต้องการสร้างเป็น "บิลค้างรับ" ไว้ทำต่อไหม?`, icon: 'question', showCancelButton: true, confirmButtonText: 'สร้างบิลค้างรับ', cancelButtonText: 'ไม่ต้องสร้าง'
+                }).then(res => {
+                    if(res.isConfirmed) {
+                        let newId = activeBillId.includes('(ค้างรับ)') ? activeBillId : activeBillId + " (ค้างรับ)";
+                        inboxNew[newId] = { items: pendingItems, picker: activePicker }; saveData(); updateUI();
+                        Swal.fire({toast: true, position: 'top', icon: 'success', title: 'สร้างบิลค้างรับเรียบร้อย', showConfirmButton: false, timer: 1500});
+                    }
+                    executeBotGeneration();
+                });
+            } else { executeBotGeneration(); }
+        }
+    </script>
+</body>
+</html>
